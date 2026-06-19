@@ -3,3 +3,10 @@ __pycache__/
 .pytest_cache/
 .venv/
 .env
+
+# Scratch / debug files
+tmp_*.txt
+*.tmp
+
+# IDE telemetry (codemeter session tracking)
+.codemeter/

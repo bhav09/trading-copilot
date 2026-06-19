@@ -1585,6 +1585,8 @@ def get_dashboard() -> str:
             loadSessions(); // Initialize local storage chat sessions
             fetchAllTrades(); // Fetch trades count and ledger cache
             startLogPolling();
+            // Periodic health poll — ensures badge auto-recovers from transient chaos 503s
+            setInterval(checkConnection, 15000);
 
             // Set up input event listener to toggle Send button state
             const textInput = document.getElementById('chatInput');
@@ -1789,14 +1791,17 @@ def get_dashboard() -> str:
         }
 
         async function checkConnection() {
-            const bypass = document.getElementById('bypassChaos').checked;
+            const bypassEl = document.getElementById('bypassChaos');
+            const bypass = bypassEl ? bypassEl.checked : true;
             const badge = document.getElementById('connectionBadge');
+            if (!badge) return; // Guard: DOM not ready
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 2000);
+            // 4 s timeout — backend health check takes ~700 ms, give it headroom
+            const timeoutId = setTimeout(() => controller.abort(), 4000);
             try {
                 const res = await fetch(`/api/health?bypass_chaos=${bypass}`, { signal: controller.signal });
-                const data = await res.json();
                 clearTimeout(timeoutId);
+                const data = await res.json();
                 if (data.repository_status === 'ok') {
                     badge.innerHTML = '<span class="badge-dot" style="background: var(--accent-emerald)"></span>Connected';
                 } else {
