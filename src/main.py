@@ -3,6 +3,7 @@ Candidate-owned FastAPI server and Web Dashboard.
 Exposes endpoints for natural language parsing, trade booking, and hosts the visual dashboard.
 """
 
+import asyncio
 import logging
 import collections
 from datetime import datetime
@@ -77,15 +78,26 @@ def get_system_logs() -> List[Dict[str, str]]:
 
 
 @app.get("/api/health")
-def get_health(bypass_chaos: bool = False) -> Dict[str, Any]:
-    """Check the health status of our app and connection to the backend repository."""
+async def get_health(bypass_chaos: bool = False) -> Dict[str, Any]:
+    """
+    Check the health status of our app and connection to the backend repository.
+    Runs the blocking sync HTTP call in a thread so the event loop is never stalled
+    by chaos-injected delays (up to 2.0 s) or retries.
+    Returns three distinct states:
+      - repository_status: "ok"      → repo is healthy
+      - repository_status: "chaos"   → repo reachable but returning 503/504 chaos faults
+      - repository_status: "unreachable: ..." → our server cannot reach the repo at all
+    """
     client = TradeRepositoryClient(bypass_chaos=bypass_chaos)
     try:
-        repo_health = client.health(timeout=1.5, max_retries=1)
-        return {"copilot_status": "ok", "repository_status": repo_health.get("status", "unknown")}
+        # asyncio.to_thread prevents blocking the event loop during chaos delays
+        repo_health = await asyncio.to_thread(client.health, 3.0, 1)
+        status_val = repo_health.get("status", "unknown")
+        logger.info(f"Health check: repository_status={status_val}")
+        return {"copilot_status": "ok", "repository_status": status_val}
     except Exception as e:
-        logger.error(f"Failed health check for repository: {e}")
-        return {"copilot_status": "ok", "repository_status": f"unreachable: {str(e)}"}
+        logger.error(f"Health check failed — repository unreachable: {e}")
+        return {"copilot_status": "ok", "repository_status": "unreachable"}
 
 
 @app.post("/api/parse", response_model=Dict[str, Any])
@@ -1796,19 +1808,27 @@ def get_dashboard() -> str:
             const badge = document.getElementById('connectionBadge');
             if (!badge) return; // Guard: DOM not ready
             const controller = new AbortController();
-            // 4 s timeout — backend health check takes ~700 ms, give it headroom
-            const timeoutId = setTimeout(() => controller.abort(), 4000);
+            // 6 s JS-side timeout — Python endpoint waits up to 3 s for the repo,
+            // so we give extra room before the browser gives up.
+            const timeoutId = setTimeout(() => controller.abort(), 6000);
             try {
                 const res = await fetch(`/api/health?bypass_chaos=${bypass}`, { signal: controller.signal });
                 clearTimeout(timeoutId);
                 const data = await res.json();
+                // Three distinct states returned by our backend:
+                // "ok"          → repo healthy and reachable
+                // "chaos"       → repo reachable but injecting 503/504 faults
+                // "unreachable" → our server cannot reach the repo
                 if (data.repository_status === 'ok') {
                     badge.innerHTML = '<span class="badge-dot" style="background: var(--accent-emerald)"></span>Connected';
+                } else if (data.repository_status === 'chaos') {
+                    badge.innerHTML = '<span class="badge-dot" style="background: var(--accent-amber)"></span>Chaos Mode';
                 } else {
-                    badge.innerHTML = '<span class="badge-dot" style="background: var(--accent-amber)"></span>Repo Chaos Active';
+                    badge.innerHTML = '<span class="badge-dot" style="background: var(--accent-rose)"></span>Repo Offline';
                 }
             } catch (e) {
                 clearTimeout(timeoutId);
+                // fetch itself failed (network error or JS timeout) — our own server is down
                 badge.innerHTML = '<span class="badge-dot" style="background: var(--accent-rose)"></span>Disconnected';
             }
         }
@@ -2027,23 +2047,23 @@ def get_dashboard() -> str:
             const t = text.trim().toLowerCase();
 
             // ── Conversational patterns ─────────────────────────────────────────
-            if (/^(hi+|hello+|hey+|howdy|yo+|sup|good\s*(morning|afternoon|evening|day)|what'?s up)[\s!.?,]*$/.test(t)) return 'conversational';
-            if (/^(how are you|how r u|how you doing|how's it going|how do you do)[\s!.?,]*$/.test(t)) return 'conversational';
-            if (/^(thanks?[\s!.,]*|thank you[\s!.,]*|thx|ty|cheers)$/.test(t)) return 'conversational';
-            if (/^(bye+|goodbye+|see\s*you|cya|later|take care)[\s!.?,]*$/.test(t)) return 'conversational';
-            if (/^(ok+|okay|got it|alright|sounds good|cool|great|nice|perfect|understood)[\s!.?,]*$/.test(t)) return 'conversational';
-            if (/^(who are you|what are you|what can you do|help|what do you do)[\s!.?,]*$/.test(t)) return 'conversational';
-            if (/^(what is this|tell me about yourself)[\s!.?,]*$/.test(t)) return 'conversational';
+            if (/^(hi+|hello+|hey+|howdy|yo+|sup|good\\s*(morning|afternoon|evening|day)|what'?s up)[\\s!.?,]*$/.test(t)) return 'conversational';
+            if (/^(how are you|how r u|how you doing|how's it going|how do you do)[\\s!.?,]*$/.test(t)) return 'conversational';
+            if (/^(thanks?[\\s!.,]*|thank you[\\s!.,]*|thx|ty|cheers)$/.test(t)) return 'conversational';
+            if (/^(bye+|goodbye+|see\\s*you|cya|later|take care)[\\s!.?,]*$/.test(t)) return 'conversational';
+            if (/^(ok+|okay|got it|alright|sounds good|cool|great|nice|perfect|understood)[\\s!.?,]*$/.test(t)) return 'conversational';
+            if (/^(who are you|what are you|what can you do|help|what do you do)[\\s!.?,]*$/.test(t)) return 'conversational';
+            if (/^(what is this|tell me about yourself)[\\s!.?,]*$/.test(t)) return 'conversational';
 
             // ── Trade signals ────────────────────────────────────────────────
-            if (/\b(buy|sell|purchase|acquire)\b/.test(t) && /\b(mw|mwh|megawatt)\b/.test(t)) return 'trade_likely';
-            if (/\b(pjm|miso|ercot|spp|caiso)\b/.test(t) && /\b(buy|sell|trade|book)\b/.test(t)) return 'trade_likely';
-            if (/\b(counterparty|shell|bp|conoco|vitol|nextera|edf|engie)\b/.test(t) && /\b(buy|sell|mw|power|electricity)\b/.test(t)) return 'trade_likely';
+            if (/\\b(buy|sell|purchase|acquire)\\b/.test(t) && /\\b(mw|mwh|megawatt)\\b/.test(t)) return 'trade_likely';
+            if (/\\b(pjm|miso|ercot|spp|caiso)\\b/.test(t) && /\\b(buy|sell|trade|book)\\b/.test(t)) return 'trade_likely';
+            if (/\\b(counterparty|shell|bp|conoco|vitol|nextera|edf|engie)\\b/.test(t) && /\\b(buy|sell|mw|power|electricity)\\b/.test(t)) return 'trade_likely';
 
             // ── Research / market data signals ───────────────────────────────
-            if (/\b(stock\s*price|share\s*price|ticker|etf|mutual\s*fund|index\s*fund|crypto|bitcoin|ethereum)\b/.test(t)) return 'research_likely';
-            if (/\b(crude\s*oil|gold\s*price|silver|commodity|natural\s*gas)\b/.test(t)) return 'research_likely';
-            if (/^(what'?s?\s*(the\s*)?price\s*of|how\s*much\s*is|current\s*price\s*of)\b/.test(t)) return 'research_likely';
+            if (/\\b(stock\\s*price|share\\s*price|ticker|etf|mutual\\s*fund|index\\s*fund|crypto|bitcoin|ethereum)\\b/.test(t)) return 'research_likely';
+            if (/\\b(crude\\s*oil|gold\\s*price|silver|commodity|natural\\s*gas)\\b/.test(t)) return 'research_likely';
+            if (/^(what'?s?\\s*(the\\s*)?price\\s*of|how\\s*much\\s*is|current\\s*price\\s*of)\\b/.test(t)) return 'research_likely';
 
             return 'unknown'; // Let Gemini classify + handle
         }
@@ -2057,16 +2077,16 @@ def get_dashboard() -> str:
         function getConversationalReply(text) {
             const t = text.trim().toLowerCase();
 
-            if (/\b(who are you|what are you|tell me about yourself|what is this)\b/.test(t)) {
+            if (/\\b(who are you|what are you|tell me about yourself|what is this)\\b/.test(t)) {
                 return "I'm your Power Trade Copilot \u2014 an AI assistant for booking and managing electricity trades. I can:\n\n\u2022 Book power trades (BUY or SELL electricity at a hub)\n\u2022 Look up current stock, ETF, or commodity prices\n\u2022 Research energy market data\n\nTry: \"Buy 100 MW tomorrow at $47 from Shell in PJM\"";
             }
-            if (/\b(what can you do|help)\b/.test(t)) {
+            if (/\\b(what can you do|help)\\b/.test(t)) {
                 return "Here's what I can help with:\n\u2022 Book energy trades \u2014 tell me direction, MW, price, counterparty, hub and delivery window\n\u2022 Look up stock prices \u2014 e.g. \"What's the price of AAPL?\"\n\u2022 Research commodity prices \u2014 e.g. \"crude oil price today\"\n\u2022 Review previous trades in the Trade Book tab";
             }
             if (/^(thanks?|thank you|thx|ty|cheers)/.test(t)) {
                 return "You're welcome! Let me know if you'd like to book another trade or look up any market data.";
             }
-            if (/^(bye|goodbye|see\s*you|cya|later|take care)/.test(t)) {
+            if (/^(bye|goodbye|see\\s*you|cya|later|take care)/.test(t)) {
                 return "Goodbye! Come back whenever you need to book trades or check market data.";
             }
             if (/^(ok+|okay|got it|alright|sounds good|cool|great|nice|perfect|understood)/.test(t)) {

@@ -101,16 +101,24 @@ class TradeRepositoryClient:
                 
         raise httpx.ConnectError("Max retries exceeded without getting a response")
 
-    def health(self, timeout: float = 1.5, max_retries: int = 1) -> Dict[str, str]:
-        """Check the API liveness status."""
+    def health(self, timeout: float = 3.0, max_retries: int = 1) -> Dict[str, str]:
+        """
+        Check the API liveness status.
+        Default timeout of 3.0 s accommodates the chaos middleware's 1.25 s DELAY fault
+        (fired every 7th request) without producing false 'unreachable' readings.
+        The 504 fault (2.0 s sleep) also completes within this window — it is correctly
+        returned as a non-200 response and handled upstream.
+        """
         old_timeout = self.timeout
         self.timeout = httpx.Timeout(timeout)
         try:
             response = self._request_with_retry("GET", "/health", max_retries=max_retries)
             if response.status_code == 200:
                 return response.json()
-            response.raise_for_status()
-            return {"status": "error"}
+            # Non-200 (503 chaos, 504 chaos) — return the chaos status explicitly
+            return {"status": "chaos", "http_code": str(response.status_code)}
+        except Exception:
+            raise
         finally:
             self.timeout = old_timeout
 

@@ -77,6 +77,29 @@ class TestTradeRepositoryClient(unittest.TestCase):
         headers = kwargs.get("headers", {})
         self.assertEqual(headers.get("x-eval-bypass-chaos"), "true")
 
+    @patch("httpx.Client.request")
+    def test_health_returns_chaos_on_503(self, mock_request) -> None:
+        """health() must return {'status': 'chaos'} on a 503/504 instead of raising."""
+        mock_response_503 = MagicMock(spec=httpx.Response)
+        mock_response_503.status_code = 503
+        mock_response_503.headers = {"Retry-After": "0"}
+        mock_request.return_value = mock_response_503
+
+        client = TradeRepositoryClient(base_url="http://127.0.0.1:8000")
+        result = client.health()
+
+        # Must NOT raise; must return the chaos status dict
+        self.assertEqual(result["status"], "chaos")
+        self.assertEqual(result["http_code"], "503")
+
+    @patch("httpx.Client.request")
+    def test_health_timeout_3s_default(self, mock_request) -> None:
+        """health() default timeout must be 3.0 s (to survive chaos 1.25 s DELAY fault)."""
+        import inspect
+        sig = inspect.signature(TradeRepositoryClient.health)
+        default_timeout = sig.parameters["timeout"].default
+        self.assertEqual(default_timeout, 3.0, "health() default timeout must be 3.0 s")
+
 
 class TestPowerTradeTranslator(unittest.TestCase):
     """Tests for the translation engine parsing and validation."""
