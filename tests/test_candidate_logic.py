@@ -124,10 +124,10 @@ class TestPowerTradeTranslator(unittest.TestCase):
             ambiguous_or_missing_fields=[],
             reasoning="Found BUY direction, 100 MW, $47 price, Shell cp, PJM hub. Tomorrow resolved using Ref Time."
         )
-        mock_response.parsed = mock_parsed
+        mock_response.text = mock_parsed.model_dump_json()
         mock_client.models.generate_content.return_value = mock_response
 
-        translator = PowerTradeTranslator()
+        translator = PowerTradeTranslator(api_key="test-key")
         ref_time = datetime(2026, 6, 19, 18, 0, 0)
         
         text = "Buy 100 MW tomorrow at $47 from Shell"
@@ -159,10 +159,10 @@ class TestPowerTradeTranslator(unittest.TestCase):
             ambiguous_or_missing_fields=["hub"],
             reasoning="Missing grid hub name."
         )
-        mock_response.parsed = mock_parsed
+        mock_response.text = mock_parsed.model_dump_json()
         mock_client.models.generate_content.return_value = mock_response
 
-        translator = PowerTradeTranslator()
+        translator = PowerTradeTranslator(api_key="test-key")
         ref_time = datetime(2026, 6, 19, 18, 0, 0)
         
         text = "Please sell 80 MW tomorrow at $51 to BP"

@@ -2078,10 +2078,10 @@ def get_dashboard() -> str:
             const t = text.trim().toLowerCase();
 
             if (/\\b(who are you|what are you|tell me about yourself|what is this)\\b/.test(t)) {
-                return "I'm your Power Trade Copilot \u2014 an AI assistant for booking and managing electricity trades. I can:\n\n\u2022 Book power trades (BUY or SELL electricity at a hub)\n\u2022 Look up current stock, ETF, or commodity prices\n\u2022 Research energy market data\n\nTry: \"Buy 100 MW tomorrow at $47 from Shell in PJM\"";
+                return "I'm your Power Trade Copilot \u2014 an AI assistant for booking and managing electricity trades. I can:\\n\\n\u2022 Book power trades (BUY or SELL electricity at a hub)\\n\u2022 Look up current stock, ETF, or commodity prices\\n\u2022 Research energy market data\\n\\nTry: 'Buy 100 MW tomorrow at $47 from Shell in PJM'";
             }
             if (/\\b(what can you do|help)\\b/.test(t)) {
-                return "Here's what I can help with:\n\u2022 Book energy trades \u2014 tell me direction, MW, price, counterparty, hub and delivery window\n\u2022 Look up stock prices \u2014 e.g. \"What's the price of AAPL?\"\n\u2022 Research commodity prices \u2014 e.g. \"crude oil price today\"\n\u2022 Review previous trades in the Trade Book tab";
+                return "Here's what I can help with:\\n\u2022 Book energy trades \u2014 tell me direction, MW, price, counterparty, hub and delivery window\\n\u2022 Look up stock prices \u2014 e.g. 'What's the price of AAPL?'\\n\u2022 Research commodity prices \u2014 e.g. 'crude oil price today'\\n\u2022 Review previous trades in the Trade Book tab";
             }
             if (/^(thanks?|thank you|thx|ty|cheers)/.test(t)) {
                 return "You're welcome! Let me know if you'd like to book another trade or look up any market data.";

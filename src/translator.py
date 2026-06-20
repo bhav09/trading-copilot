@@ -1,11 +1,13 @@
 """
 Power Trade Natural Language Translator.
-Translates unstructured chat, email, or free-form queries into structured trade models using Vertex AI Gemini.
+Translates unstructured chat, email, or free-form queries into structured trade models using Google AI Gemini.
 Also classifies query intent (trade_booking, market_research, off_topic) to support guardrails and routing.
 """
 
 from __future__ import annotations
+import json
 import logging
+import os
 from datetime import datetime
 from enum import Enum
 from typing import List, Optional
@@ -119,24 +121,23 @@ class ParsedTrade(BaseModel):
 
 class PowerTradeTranslator:
     """
-    Translator component that calls Vertex AI Gemini with Structured Outputs.
+    Translator component that calls Google AI Studio Gemini with Structured Outputs.
     Classifies incoming queries and parses trade details when applicable.
     """
 
     def __init__(
         self,
-        project_id: str = "aurex-495417",
-        region: str = "us-central1",
-        model_name: str = "gemini-2.5-flash"
+        api_key: Optional[str] = None,
+        model_name: str = "gemini-2.5-flash",
     ):
-        self.project_id = project_id
-        self.region = region
         self.model_name = model_name
-        self.client = genai.Client(
-            vertexai=True,
-            project=self.project_id,
-            location=self.region
-        )
+        resolved_key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if not resolved_key:
+            raise ValueError(
+                "GEMINI_API_KEY (or GOOGLE_API_KEY) environment variable is required. "
+                "Get a key from https://aistudio.google.com/"
+            )
+        self.client = genai.Client(api_key=resolved_key)
 
     def translate(self, text: str, reference_time: Optional[datetime] = None) -> ParsedTrade:
         """
@@ -208,13 +209,12 @@ class PowerTradeTranslator:
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,
                     response_mime_type="application/json",
-                    response_schema=ParsedTrade,
-                    temperature=0.0,   # Deterministic for classification + parsing
+                    temperature=0.0,
                 )
             )
 
-            # google-genai parses structured outputs directly into the Pydantic schema
-            parsed: ParsedTrade = response.parsed
+            raw = response.text or "{}"
+            parsed: ParsedTrade = ParsedTrade.model_validate(json.loads(raw))
             logger.info(
                 f"Translated text. query_type={parsed.query_type}, "
                 f"confidence={parsed.confidence_score:.2f}"
